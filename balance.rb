@@ -1,6 +1,8 @@
 require "ruby_event_store"
 require "aggregate_root"
 require "minitest/autorun"
+require_relative "aggregate_root/two_streams_snapshot_repository"
+
 
 $res = RubyEventStore::Client.new(repository: RubyEventStore::InMemoryRepository.new)
 
@@ -37,7 +39,7 @@ end
 
 class BalanceTest < Minitest::Test 
   def balance(&block)
-    AggregateRoot::Repository.new($res).with_aggregate(Balance.new, "balance", &block)
+    AggregateRoot::TwoStreamsSnapshotRepository.new($res).with_aggregate(Balance.new, "balance", &block)
   end
 
   def test_happy
@@ -48,11 +50,10 @@ class BalanceTest < Minitest::Test
       b.credit(100) 
       b.credit(100) 
     end
-
     balance { |b| b.withdraw(500) }
   end
 
-  def test_fial 
+  def test_fail
     assert_raises Balance::InsufficientFunds do
       balance { |b| b.withdraw(500) }
     end
