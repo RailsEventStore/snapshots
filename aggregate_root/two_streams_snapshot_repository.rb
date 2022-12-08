@@ -1,21 +1,34 @@
 # frozen_string_literal: true
 require 'base64'
+require 'ruby_event_store/event'
 
 module AggregateRoot
   class TwoStreamsSnapshotRepository
-    def initialize(event_store, interval = 1)
+    DEFAULT_SNAPSHOT_INTERVAL = 2
+    SNAPSHOT_STREAM_PATTERN = ->(base_stream_name) { "#{base_stream_name}_snapshots" }
+    NotRestorableSnapshot = Class.new(StandardError)
+    NotDumpableAggregateRoot = Class.new(StandardError)
+
+    def initialize(event_store, interval = DEFAULT_SNAPSHOT_INTERVAL)
+      raise ArgumentError, 'interval must be an Integer' unless interval.instance_of?(Integer)
+      raise ArgumentError, 'interval must be greater than 0' unless interval > 0
       @event_store = event_store
       @interval = interval
     end
 
-    SnapshotEvent = Class.new(RubyEventStore::Event)
+    Snapshot = Class.new(RubyEventStore::Event)
 
     def load(aggregate, stream_name)
       last_snapshot = load_snapshot_event(stream_name)
       query = event_store.read.stream(stream_name)
       if last_snapshot
-        aggregate = load_marshal(last_snapshot)
-        query = query.from(last_snapshot.data[:last_event_id])
+        begin
+          aggregate = load_marshal(last_snapshot)
+        rescue NotRestorableSnapshot
+        else
+          aggregate.version = last_snapshot.data.fetch(:version)
+          query = query.from(last_snapshot.data.fetch(:last_event_id))
+        end
       end
       query.reduce { |_, ev| aggregate.apply(ev) }
       aggregate.version = aggregate.version + aggregate.unpublished_events.count
@@ -30,8 +43,11 @@ module AggregateRoot
 
       aggregate.version = aggregate.version + events.count
 
-      if time_for_snapshot?(aggregate.version)
-        publish_snapshot_event(aggregate, stream_name, events.last.event_id)
+      if time_for_snapshot?(aggregate.version, events.size)
+        begin
+          publish_snapshot_event(aggregate, stream_name, events.last.event_id)
+        rescue NotDumpableAggregateRoot
+        end
       end
     end
 
@@ -47,29 +63,33 @@ module AggregateRoot
 
     def publish_snapshot_event(aggregate, stream_name, last_event_id)
       event_store.publish(
-        SnapshotEvent.new(data: { marshal: build_marshal(aggregate), last_event_id: last_event_id }),
-        stream_name: snapshot_stream_name(stream_name)
+        Snapshot.new(
+          data: { marshal: build_marshal(aggregate), last_event_id: last_event_id, version: aggregate.version }
+        ),
+        stream_name: SNAPSHOT_STREAM_PATTERN.(stream_name)
       )
     end
 
     def build_marshal(aggregate)
-      Base64.encode64(Marshal.dump(aggregate))
+      Marshal.dump(aggregate)
+    rescue TypeError
+      raise NotDumpableAggregateRoot
     end
 
     def load_snapshot_event(stream_name)
-      event_store.read.stream(snapshot_stream_name(stream_name)).last
+      event_store.read.stream(SNAPSHOT_STREAM_PATTERN.(stream_name)).last
     end
 
     def load_marshal(snpashot_event)
-      Marshal.load(Base64.decode64(snpashot_event.data[:marshal]))
+      Marshal.load(snpashot_event.data.fetch(:marshal))
+    rescue TypeError, ArgumentError
+      raise NotRestorableSnapshot
     end
 
-    def snapshot_stream_name(stream_name)
-      "#{stream_name}_snapshots"
-    end
-
-    def time_for_snapshot?(version)
-      version % interval == 0
+    def time_for_snapshot?(aggregate_version, just_published_events)
+      events_in_stream = aggregate_version + 1
+      events_since_time_for_snapshot = events_in_stream % interval
+      just_published_events > events_since_time_for_snapshot
     end
   end
 end
