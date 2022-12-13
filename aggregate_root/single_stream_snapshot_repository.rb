@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module AggregateRoot
-  class DaveSnapshotRepository
+  class SingleStreamSnapshotRepository
     def initialize(event_store, interval = 2)
       @event_store = event_store
       @interval = interval
