@@ -9,6 +9,7 @@ GEM
       concurrent-ruby (~> 1.0, >= 1.1.6)
 
 PLATFORMS
+  arm64-darwin-21
   arm64-darwin-22
 
 DEPENDENCIES

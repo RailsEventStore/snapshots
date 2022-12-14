@@ -1,9 +1,10 @@
 # frozen_string_literal: true
+
 require 'base64'
 require 'ruby_event_store/event'
 
 module AggregateRoot
-  class TwoStreamsSnapshotRepository
+  class SnapshotRepository
     DEFAULT_SNAPSHOT_INTERVAL = 2
     SNAPSHOT_STREAM_PATTERN = ->(base_stream_name) { "#{base_stream_name}_snapshots" }
     NotRestorableSnapshot = Class.new(StandardError)
